@@ -3,6 +3,7 @@
 # PXC-391
 
 --source include/galera_cluster.inc
+--source include/have_innodb.inc
 --source include/have_query_cache.inc
 
 --disable_warnings
@@ -144,4 +145,3 @@ DROP TABLE t1, t2, x1, x2;
 --disable_query_log
 SET GLOBAL wsrep_mode = DEFAULT;
 --enable_query_log
-

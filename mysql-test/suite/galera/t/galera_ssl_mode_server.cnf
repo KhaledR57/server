@@ -1,0 +1,19 @@
+# Configuration file for galera_ssl_mode_server.test.
+#
+# Note that here we use galera certificates with default ssl-ca
+# to verify that SSL connection is established without
+# verifying the certificate.
+#
+!include ../galera_2nodes.cnf
+
+[mysqld]
+wsrep-ssl-mode=SERVER
+ssl-ca=@ENV.MYSQL_TEST_DIR/std_data/galera_certs/galera.root.crt
+
+[mysqld.1]
+ssl-key=@ENV.MYSQL_TEST_DIR/std_data/galera_certs/galera.1.key
+ssl-cert=@ENV.MYSQL_TEST_DIR/std_data/galera_certs/galera.1.crt
+
+[mysqld.2]
+ssl-key=@ENV.MYSQL_TEST_DIR/std_data/galera_certs/galera.2.key
+ssl-cert=@ENV.MYSQL_TEST_DIR/std_data/galera_certs/galera.2.crt
