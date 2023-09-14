@@ -1,0 +1,122 @@
+--source include/have_debug.inc
+
+--echo #
+--echo # MDEV-20034 Add support for the pre-defined weak SYS_REFCURSOR
+--echo #
+
+--echo #
+--echo # A cursor on a SELECT returning a local SP variable works in the caller
+--echo #
+
+DELIMITER /;
+CREATE FUNCTION f1(a INT) RETURNS SYS_REFCURSOR
+BEGIN
+  DECLARE c0 SYS_REFCURSOR;
+  OPEN c0 FOR SELECT a; 
+  RETURN c0;
+END;
+/
+#
+# Although f1's sp_rcontext is already destroyed when FETCH is executed in p2,
+# the cursor opened by `SELECT a` in f1 still works
+# because the cursor was materialized into a temporary table.
+#
+CREATE PROCEDURE p2()
+BEGIN
+  DECLARE c0 SYS_REFCURSOR DEFAULT f1(10);
+  DECLARE v INT;
+  FETCH c0 INTO v;
+  SELECT v;
+END;
+/
+DELIMITER ;/
+CALL p2();
+DROP PROCEDURE p2;
+DROP FUNCTION f1;
+
+
+--echo #
+--echo # A function returning on error still clears ref counters
+--echo #
+
+--echo # RETURN
+
+DELIMITER /;
+CREATE FUNCTION f1() RETURNS SYS_REFCURSOR
+BEGIN
+  DECLARE c0 SYS_REFCURSOR;
+  DECLARE v INT;
+  OPEN c0 FOR SELECT 1;
+  FETCH c0 INTO v;
+  FETCH c0 INTO v; -- This raises 'No data' error
+  RETURN c0;
+END;
+/
+CREATE FUNCTION f2() RETURNS SYS_REFCURSOR
+BEGIN
+  DECLARE c0 SYS_REFCURSOR;
+  DECLARE CONTINUE HANDLER FOR SQLSTATE '02000' RETURN NULL; -- Handle 'No data'
+  SET c0= f1();
+  RETURN c0;
+END;
+/
+DELIMITER ;/
+# CURSOR_REF_COUNT(0) is expected to be 0
+# Let's also check CURSOR_REF_COUNT(1) just in case. NULL is expected.
+SELECT f2(), CURSOR_REF_COUNT(0) AS cnt_0, CURSOR_REF_COUNT(1) AS cnt_0;
+DROP FUNCTION f1;
+DROP FUNCTION f2;
+
+
+--echo # INOUT parameter
+DELIMITER /;
+CREATE FUNCTION f1(INOUT c0 SYS_REFCURSOR) RETURNS SYS_REFCURSOR
+BEGIN
+  DECLARE v INT;
+  OPEN c0 FOR SELECT 1;
+  FETCH c0 INTO v;
+  FETCH c0 INTO v; -- This raises 'No data' error
+  RETURN c0;
+END;
+/
+CREATE FUNCTION f2() RETURNS SYS_REFCURSOR
+BEGIN
+  DECLARE c0 SYS_REFCURSOR;
+  DECLARE CONTINUE HANDLER FOR SQLSTATE '02000' RETURN NULL; -- Handle 'No data'
+  DO f1(c0);
+  RETURN c0;
+END;
+/
+DELIMITER ;/
+# CURSOR_REF_COUNT(0) is expected to be 0
+# Let's also check CURSOR_REF_COUNT(1) just in case. NULL is expected.
+SELECT f2(), CURSOR_REF_COUNT(0) AS cnt_0, CURSOR_REF_COUNT(1) AS cnt_0;
+DROP FUNCTION f1;
+DROP FUNCTION f2;
+
+
+--echo # OUT parameter
+DELIMITER /;
+CREATE FUNCTION f1(OUT c0 SYS_REFCURSOR) RETURNS SYS_REFCURSOR
+BEGIN
+  DECLARE v INT;
+  OPEN c0 FOR SELECT 1;
+  FETCH c0 INTO v;
+  FETCH c0 INTO v; -- This raises 'No data' error
+  RETURN c0;
+END;
+/
+CREATE FUNCTION f2() RETURNS SYS_REFCURSOR
+BEGIN
+  DECLARE c0 SYS_REFCURSOR;
+  DECLARE CONTINUE HANDLER FOR SQLSTATE '02000' RETURN NULL; -- Handle 'No data'
+  DO f1(c0);
+  RETURN c0;
+END;
+/
+DELIMITER ;/
+# CURSOR_REF_COUNT(0) is expected to be 0
+# Let's also check CURSOR_REF_COUNT(1) just in case. NULL is expected.
+SELECT f2(), CURSOR_REF_COUNT(0) AS cnt_0, CURSOR_REF_COUNT(1) AS cnt_0;
+DROP FUNCTION f1;
+DROP FUNCTION f2;

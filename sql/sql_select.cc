@@ -21934,7 +21934,7 @@ bool Create_tmp_table::add_fields(THD *thd,
                          param->force_copy_fields);
       if (unlikely(!new_field))
       {
-        if (unlikely(thd->is_fatal_error))
+        if (unlikely(thd->is_fatal_error || item->cols() == 1))
           goto err;                             // Got OOM
         continue;                               // Some kind of const item
       }
@@ -22685,6 +22685,11 @@ void Virtual_tmp_table::setup_field_pointers()
       }
     }
     cur_field->reset();
+    /*
+      SYS_REFCURSOR SP variables need NULL as the initial Field value
+      to watch sp_cursor_array_element::m_use_count properly.
+    */
+    cur_field->set_null();
     field_pos+= cur_field->pack_length();
   }
 }

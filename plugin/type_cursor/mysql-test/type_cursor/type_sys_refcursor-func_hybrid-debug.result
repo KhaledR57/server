@@ -1,0 +1,61 @@
+SET sql_mode=ORACLE;
+#
+#  MDEV-20034 Add support for the pre-defined weak SYS_REFCURSOR
+#
+#
+# Hybrid functions
+#
+CREATE PROCEDURE p1(task VARCHAR(32)) AS
+c0 SYS_REFCURSOR;
+c1 SYS_REFCURSOR;
+c2 SYS_REFCURSOR;
+v INT;
+BEGIN
+IF task LIKE '%open_c0%' THEN
+OPEN c0 FOR SELECT 1;
+END IF;
+SELECT 'p1-1' AS stage, c0, c1, c2, CURSOR_REF_COUNT(0) AS cnt_0, CURSOR_REF_COUNT(1) AS cnt_1;
+OPEN c1 FOR SELECT 11 FROM DUAL;
+SELECT 'p1-2' AS stage, c0, c1, c2, CURSOR_REF_COUNT(0) AS cnt_0, CURSOR_REF_COUNT(1) AS cnt_1;
+c2:= CASE WHEN c0 IS NULL THEN c1 ELSE c0 END;
+SELECT 'p1-3' AS stage, c0, c1, c2, CURSOR_REF_COUNT(0) AS cnt_0, CURSOR_REF_COUNT(1) AS cnt_1;
+FETCH c2 INTO v;
+SELECT v;
+END;
+/
+CREATE PROCEDURE p2(task VARCHAR(32)) AS
+BEGIN
+SELECT 'p2-0' AS stage, CURSOR_REF_COUNT(0) AS cnt_0;
+CALL p1(task);
+SELECT 'p2-1' AS stage, CURSOR_REF_COUNT(0) AS cnt_0;
+END;
+/
+CALL p2('');
+stage	cnt_0
+p2-0	NULL
+stage	c0	c1	c2	cnt_0	cnt_1
+p1-1	NULL	NULL	NULL	NULL	NULL
+stage	c0	c1	c2	cnt_0	cnt_1
+p1-2	NULL	0	NULL	1	NULL
+stage	c0	c1	c2	cnt_0	cnt_1
+p1-3	NULL	0	0	2	NULL
+v
+11
+stage	cnt_0
+p2-1	0
+CALL p2('open_c0');
+stage	cnt_0
+p2-0	NULL
+stage	c0	c1	c2	cnt_0	cnt_1
+p1-1	0	NULL	NULL	1	NULL
+stage	c0	c1	c2	cnt_0	cnt_1
+p1-2	0	1	NULL	1	1
+stage	c0	c1	c2	cnt_0	cnt_1
+p1-3	0	1	0	2	1
+v
+1
+stage	cnt_0
+p2-1	0
+DROP PROCEDURE p1;
+DROP PROCEDURE p2;
+SET sql_mode=DEFAULT;
