@@ -34364,11 +34364,15 @@ bool Sql_cmd_dml::execute(THD *thd)
 
   MYSQL_DML_DONE(thd, res);
 
+  delete result;
+  result= NULL;
   return res;
 
 err:
   DBUG_ASSERT(thd->is_error() || thd->killed);
   MYSQL_DML_DONE(thd, 1);
+  delete result;
+  result= NULL;
   THD_STAGE_INFO(thd, stage_end);
   (void)unit->cleanup();
   if (is_prepared())
