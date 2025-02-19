@@ -105,6 +105,14 @@ EXPLAIN
           "key": "t1_b",
           "key_length": "5",
           "used_key_parts": ["b"],
+          "rowid_filter": {
+            "range": {
+              "key": "t1_a",
+              "used_key_parts": ["a"]
+            },
+            "rows": 6,
+            "selectivity_pct": 60
+          },
           "loops": 1,
           "rows": 1,
           "cost": "COST_REPLACED",
@@ -142,6 +150,14 @@ EXPLAIN
           "key": "t1_b",
           "key_length": "5",
           "used_key_parts": ["b"],
+          "rowid_filter": {
+            "range": {
+              "key": "t1_a",
+              "used_key_parts": ["a"]
+            },
+            "rows": 8,
+            "selectivity_pct": 80
+          },
           "loops": 1,
           "rows": 2,
           "cost": "COST_REPLACED",
