@@ -4806,30 +4806,26 @@ bool Security_context::check_access(const privilege_t want_access,
   @retval FALSE success
 */
 
-bool
-Security_context::
-change_security_context(THD *thd,
-                        LEX_CSTRING *definer_user,
-                        LEX_CSTRING *definer_host,
-                        LEX_CSTRING *db,
-                        Security_context **backup)
+bool Security_context::change_security_context(THD *thd,
+                       LEX_CSTRING *definer_user, LEX_CSTRING *definer_host,
+                       LEX_CSTRING *db, Security_context **backup)
 {
   bool needs_change;
 
   DBUG_ENTER("Security_context::change_security_context");
 
-  DBUG_ASSERT(definer_user->str && definer_host->str);
+  DBUG_ASSERT(definer_user->str);
+  DBUG_ASSERT(definer_host->str);
 
   *backup= NULL;
-  needs_change= (strcmp(definer_user->str, thd->security_ctx->priv_user) ||
-                 !Lex_ident_host(*definer_host).
-                   streq(Lex_cstring_strlen(thd->security_ctx->priv_host)));
+  needs_change= strcmp(definer_user->str, thd->security_ctx->priv_user) ||
+                !Lex_ident_host(*definer_host).
+                   streq(Lex_cstring_strlen(thd->security_ctx->priv_host));
   if (needs_change)
   {
     if (acl_getroot(this, *definer_user, *definer_host, *definer_host, *db))
     {
-      my_error(ER_NO_SUCH_USER, MYF(0), definer_user->str,
-               definer_host->str);
+      my_error(ER_NO_SUCH_USER, MYF(0), definer_user->str, definer_host->str);
       DBUG_RETURN(TRUE);
     }
     *backup= thd->security_ctx;

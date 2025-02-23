@@ -3245,10 +3245,8 @@ bool Sql_cmd_call::execute(THD *thd)
       If the routine is not found, let's still check EXECUTE_ACL to decide
       whether to return "Access denied" or "Routine does not exist".
     */
-    if (check_routine_access(thd, EXECUTE_ACL, &m_name->m_db,
-                             &m_name->m_name,
-                             &sp_handler_procedure,
-                             false))
+    if (check_routine_access(thd, EXECUTE_ACL, &m_name->m_db, &m_name->m_name,
+                             &sp_handler_procedure, false))
       return true;
     /*
       sp_find_routine can have issued an ER_SP_RECURSION_LIMIT error.

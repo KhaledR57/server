@@ -853,12 +853,8 @@ bool init_new_connection_handler_thread()
 
   @retval 0 ok, 1 error
 */
-int thd_set_peer_addr(THD *thd,
-  sockaddr_storage *addr,
-  const char *ip,
-  uint port,
-  bool check_proxy_networks,
-  uint *host_errors)
+int thd_set_peer_addr(THD *thd, sockaddr_storage *addr, const char *ip,
+                      uint port, bool check_proxy_networks, uint *host_errors)
 {
   *host_errors= 0;
 

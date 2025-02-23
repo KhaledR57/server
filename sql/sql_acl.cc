@@ -712,10 +712,8 @@ static void rebuild_acl_dbs();
 static void init_check_host(void);
 static void rebuild_check_host(void);
 static void rebuild_role_grants(void);
-static ACL_USER *find_user_exact(const LEX_CSTRING &host,
-                                 const LEX_CSTRING &user);
-static ACL_USER *find_user_wild(const LEX_CSTRING &host,
-                                const LEX_CSTRING &user,
+static ACL_USER *find_user_exact(const LEX_CSTRING &, const LEX_CSTRING &);
+static ACL_USER *find_user_wild(const LEX_CSTRING &, const LEX_CSTRING &,
                                 const LEX_CSTRING &ip= null_clex_str);
 static ACL_ROLE *find_acl_role(const LEX_CSTRING &user, bool allow_public);
 static ROLE_GRANT_PAIR *find_role_grant_pair(const LEX_CSTRING *u, const LEX_CSTRING *h, const LEX_CSTRING *r);
@@ -3250,7 +3248,8 @@ template <typename T> T* find_by_username_or_anon(T* arr, size_t len, const char
     if (i > start && strcmp(user, entry->get_username()))
       break;
 
-    if (compare_hostname(&entry->host, host, ip) && (!match_db_func || match_db_func(entry, db, db_is_pattern)))
+    if (compare_hostname(&entry->host, host, ip) &&
+        (!match_db_func || match_db_func(entry, db, db_is_pattern)))
     {
       ret= entry;
       break;
@@ -3264,7 +3263,8 @@ template <typename T> T* find_by_username_or_anon(T* arr, size_t len, const char
     T *entry = &arr[i];
     if (*entry->get_username() || (ret && acl_compare(entry, ret) >= 0))
       break;
-    if (compare_hostname(&entry->host, host, ip) && (!match_db_func || match_db_func(entry, db, db_is_pattern)))
+    if (compare_hostname(&entry->host, host, ip) &&
+        (!match_db_func || match_db_func(entry, db, db_is_pattern)))
     {
       ret= entry;
       break;
@@ -3518,8 +3518,7 @@ end:
 }
 
 
-int acl_check_setrole(THD *thd,
-                      const LEX_CSTRING &rolename,
+int acl_check_setrole(THD *thd, const LEX_CSTRING &rolename,
                       privilege_t *access)
 {
   if (!initialized)
@@ -14984,7 +14983,7 @@ bool acl_authenticate(THD *thd, uint com_change_user_pkt_len)
     }
 #endif
 
-    sctx->master_access= (acl_user->access | public_access());
+    sctx->master_access= acl_user->access | public_access();
     strmake_buf(sctx->priv_user, acl_user->user.str);
 
     if (acl_user->host.hostname)
@@ -15064,10 +15063,10 @@ bool acl_authenticate(THD *thd, uint com_change_user_pkt_len)
   /*
     In case the user has a default role set, attempt to set that role
   */
-  if (initialized && acl_user->default_rolename.length) {
+  if (initialized && acl_user->default_rolename.length)
+  {
     privilege_t access(NO_ACL);
-    int result;
-    result= acl_check_setrole(thd, acl_user->default_rolename, &access);
+    int result= acl_check_setrole(thd, acl_user->default_rolename, &access);
     if (!result)
       result= acl_setrole(thd, acl_user->default_rolename, access);
     if (result)
@@ -15080,7 +15079,7 @@ bool acl_authenticate(THD *thd, uint com_change_user_pkt_len)
   if (mpvio.db.length)
   {
     uint err = mysql_change_db(thd, &mpvio.db, FALSE);
-    if(err)
+    if (err)
     {
       if (err == ER_DBACCESS_DENIED_ERROR)
       {
