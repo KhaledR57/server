@@ -83,6 +83,8 @@ public:
     keyword_LOOSESCAN,
     keyword_DUPSWEEDOUT,
     keyword_INTOEXISTS,
+    keyword_DERIVED_CONDITION_PUSHDOWN,
+    keyword_NO_DERIVED_CONDITION_PUSHDOWN,
 
     // Other token types
     tIDENT,
@@ -337,7 +339,9 @@ private:
       return id == TokenID::keyword_BKA ||
              id == TokenID::keyword_BNL ||
              id == TokenID::keyword_NO_BKA ||
-             id == TokenID::keyword_NO_BNL;
+             id == TokenID::keyword_NO_BNL ||
+             id == TokenID::keyword_DERIVED_CONDITION_PUSHDOWN ||
+             id == TokenID::keyword_NO_DERIVED_CONDITION_PUSHDOWN;
     }
   };
   class Table_level_hint_type: public TokenChoice<Parser,
