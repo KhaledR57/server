@@ -8892,7 +8892,7 @@ static void process_tab(table_pos *t, table_pos **&prev, uint &processed)
 }
 
 static bool put_after(table_pos *tab,
-                      table_pos **first_in_this_bush,
+                      table_pos **first_in_this_subgraph,
                       table_pos **&prev,
                       uint &processed);
 
@@ -8916,8 +8916,8 @@ static bool process_outer_relations(table_pos *tab,
 {
   if (tab->outer_side.elements > 0)
   {
-    // process this "bush"
-    table_pos **first_in_this_bush= prev;
+    // process this "sub-graph"
+    table_pos **first_in_this_subgraph= prev;
     List_iterator_fast<table_pos> it(tab->outer_side);
     table_pos *t;
     while((t= it++))
@@ -8955,7 +8955,7 @@ static bool process_outer_relations(table_pos *tab,
       }
       else
       {
-        if (put_after(t, first_in_this_bush, prev, processed))
+        if (put_after(t, first_in_this_subgraph, prev, processed))
           return TRUE;
       }
     }
@@ -8963,13 +8963,13 @@ static bool process_outer_relations(table_pos *tab,
   return FALSE;
 }
 
-static bool put_between(table_pos *tab, table_pos **first_in_this_bush,
-                        table_pos *last_in_the_bush, uint &processed)
+static bool put_between(table_pos *tab, table_pos **first_in_this_subgraph,
+                        table_pos *last_in_the_subgraph, uint &processed)
 {
-  table_pos **prev= first_in_this_bush;
+  table_pos **prev= first_in_this_subgraph;
   table_pos *curr= *prev;
   // find place to insert
-  while (curr != last_in_the_bush &&  tab->order < curr->order)
+  while (curr != last_in_the_subgraph &&  tab->order < curr->order)
   {
     prev= &curr->next;
     curr= curr->next;
@@ -8987,7 +8987,7 @@ static bool put_between(table_pos *tab, table_pos **first_in_this_bush,
 }
 
 static bool put_after(table_pos *tab,
-                      table_pos **first_in_this_bush,
+                      table_pos **first_in_this_subgraph,
                       table_pos **&prev,
                       uint &processed)
 {
@@ -9021,7 +9021,7 @@ static bool put_after(table_pos *tab,
           started from the first independent table we have found - t1
           and went by outer_side relation till table t3):
 
-          first_in_this_bush
+          first_in_this_subgraph
           |
           *->t1 => t2 => t3
                          ^
@@ -9045,7 +9045,7 @@ static bool put_after(table_pos *tab,
           it have definetly early position in the original list of tables
           than t4.
         */
-        if (put_between(t, first_in_this_bush, tab, processed))
+        if (put_between(t, first_in_this_subgraph, tab, processed))
           return TRUE;
       }
     }
@@ -9182,7 +9182,7 @@ bool setup_oracle_join(THD *thd, COND **conds, TABLE_LIST *tables, uint n_tables
     if (i >= n_tables)
       break;
 
-    // Process "bush" whith this indeendent is top of one of branches
+    // Process "sub-graph" whith this indeendent is top of one of branches
     process_tab(tab + i, prev, processed);
     process_outer_relations(tab + i, prev, processed);
   }while (i < n_tables);
@@ -9197,7 +9197,7 @@ bool setup_oracle_join(THD *thd, COND **conds, TABLE_LIST *tables, uint n_tables
         |              |
         +--------------+
 
-       there is no starting point for bush processing,
+       there is no starting point for subgraph processing,
        so this table are left not "processed"
     */
     my_error(ER_INVALID_USE_OF_ORA_JOIN_CYCLE, MYF(0));
