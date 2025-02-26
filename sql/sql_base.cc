@@ -8812,6 +8812,423 @@ bool setup_on_expr(THD *thd, TABLE_LIST *table, bool is_update)
   return FALSE;
 }
 
+
+struct table_pos: public Sql_alloc
+{
+  table_pos *next;
+  List<table_pos> inner_side;
+  List<table_pos> outer_side;
+  List<Item> on_conds;
+  TABLE_LIST *table;
+  int order;
+  bool processed;
+};
+
+
+static int
+table_pos_sort(table_pos *a, table_pos *b, void *arg)
+{
+  //sort bacward (descent)
+  return b->order - a->order;
+}
+
+typedef enum {EXP_ERROR, EXP_OK, EXP_IGNORED} exp_processing_result;
+
+static exp_processing_result
+ora_join_process_expression(THD *thd, Item *cond,
+                            table_pos *tab, uint n_tables)
+{
+  DBUG_ENTER("ora_join_process_expression");
+
+  // collect info about relations and report error if there are some
+  struct ora_join_processor_param param;
+  param.outer= NULL; param.inner.empty();
+  if (cond->walk(&Item::ora_join_processor, FALSE, (void *)(&param)))
+    DBUG_RETURN(EXP_ERROR);
+
+  /*
+    thre fould be at least one table for outer part (inner can be absent in
+    case of constants
+  */
+  DBUG_ASSERT(param.outer != NULL);
+  table_pos *outer_tab= tab +
+    param.outer->ora_join_table_no;
+  if (param.inner.elements > 0)
+  {
+    outer_tab->on_conds.push_back(cond);
+    List_iterator_fast<TABLE_LIST> it(param.inner);
+    TABLE_LIST *t;
+    while ((t= it++))
+    {
+      table_pos *inner_tab= tab + t->ora_join_table_no;
+      outer_tab->inner_side.push_back(inner_tab);
+      inner_tab->outer_side.push_back(outer_tab);
+    }
+  }
+  else
+  {
+    StringBuffer<STRING_BUFFER_USUAL_SIZE> buf;
+    String expr(buf);
+    cond->print(&expr, QT_ORDINARY);
+    push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+                        WARN_ORA_JOIN_IGNORED,
+                        ER_THD(thd, WARN_ORA_JOIN_IGNORED),
+                        expr.c_ptr());
+    DBUG_RETURN(EXP_IGNORED);
+  }
+
+
+  DBUG_RETURN(EXP_OK);
+}
+
+static void process_tab(table_pos *t, table_pos **&prev, uint &processed)
+{
+    *prev= t;
+    DBUG_ASSERT(t->next == NULL);
+    t->processed= TRUE;
+    DBUG_ASSERT(t->next == NULL);
+    prev= &t->next;
+    processed++;
+}
+
+static bool put_after(table_pos *tab,
+                      table_pos **first_in_this_bush,
+                      table_pos **&prev,
+                      uint &processed);
+
+static bool check_directed_cycle(table_pos *tab, table_pos* beginning)
+{
+  List_iterator_fast<table_pos> it(tab->outer_side);
+  table_pos *t;
+  while((t= it++))
+  {
+    if (t == beginning)
+      return true;
+    if (check_directed_cycle(t, beginning))
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static bool process_outer_relations(table_pos *tab,
+                                    table_pos **&prev,
+                                    uint &processed)
+{
+  if (tab->outer_side.elements > 0)
+  {
+    // process this "bush"
+    table_pos **first_in_this_bush= prev;
+    List_iterator_fast<table_pos> it(tab->outer_side);
+    table_pos *t;
+    while((t= it++))
+    {
+      if (t->processed)
+      {
+        /*
+          it is case of "non-cyclyc" loop (or just processed alreay
+          branch)
+           for example:
+
+           t1-> t3
+                 ^
+                 |
+              t2-+
+          (it would be t1 then t3 then t2 and again probe t3 (from t2)
+
+          Check if it is directional loop also:
+        */
+        if (check_directed_cycle(t, t))
+        {
+          /*
+             "round" cyclic reference happened
+
+              t1 -> t2 -> t3 -+
+                    ^         |
+                    |         |
+                    +---------+
+
+              t2 is "processed" in the example
+          */
+          my_error(ER_INVALID_USE_OF_ORA_JOIN_CYCLE, MYF(0));
+          return TRUE;
+        }
+      }
+      else
+      {
+        if (put_after(t, first_in_this_bush, prev, processed))
+          return TRUE;
+      }
+    }
+  }
+  return FALSE;
+}
+
+static bool put_between(table_pos *tab, table_pos **first_in_this_bush,
+                        table_pos *last_in_the_bush, uint &processed)
+{
+  table_pos **prev= first_in_this_bush;
+  table_pos *curr= *prev;
+  // find place to insert
+  while (curr != last_in_the_bush &&  tab->order < curr->order)
+  {
+    prev= &curr->next;
+    curr= curr->next;
+  }
+  table_pos **tmp= prev; // pointer on temparary end of the list
+  process_tab(tab, tmp, processed);
+  *tmp= curr; // return "tail" of the list
+
+  table_pos *next= tab->next;
+  tmp=  &tab->next;
+  process_outer_relations(tab, tmp, processed);
+  *tmp= next; // return "tail" of the list (if needed)
+
+  return FALSE;
+}
+
+static bool put_after(table_pos *tab,
+                      table_pos **first_in_this_bush,
+                      table_pos **&prev,
+                      uint &processed)
+{
+  process_tab(tab, prev, processed);
+  if (tab->inner_side.elements)
+  {
+    List_iterator_fast<table_pos> it(tab->inner_side);
+    table_pos *t;
+    while((t= it++))
+    {
+      if (!t->processed)
+      {
+        /*
+          This (t3 in the example) table serve as outer table for several
+          otheres.
+
+          For example we have such depemdences (inner to the right and outer
+          to the left):
+          SELECT *
+            FROM t1,t2,t3,t4
+            WHERE t1.a=t2.a(+) AND t2.a=t3.a(+) AND
+                  t4.a=t3.a(+);
+
+          t1->t2-+
+                 |
+                 +==>t3
+                 |
+          t4-----+
+
+          So we have build following list of left joins already (we
+          started from the first independent table we have found - t1
+          and went by outer_side relation till table t3):
+
+          first_in_this_bush
+          |
+          *->t1 => t2 => t3
+                         ^
+                         |
+            t->t4       tab
+
+          Now we goes by list of unprocessed inner relation of t3 and put
+          them  before t3.
+          So we have to put t4 somewhere between t1 and t2 or
+          between t2 and t3 (depends on its original position because we
+          are trying to keep original order where it is possible).
+
+             t1 => t2 => t4 => t3
+
+          SELECT *
+            FROM t1 left join t2 on (t1.a=t2.a),
+                 t4
+                 left join t3 on (t2.a=t3.a and t1.a=t3)
+
+          We can also put it before t1, but as far as we have found t1 first
+          it have definetly early position in the original list of tables
+          than t4.
+        */
+        if (put_between(t, first_in_this_bush, tab, processed))
+          return TRUE;
+      }
+    }
+  }
+
+
+  return FALSE;
+}
+
+#ifndef DBUG_OFF
+static void dbug_ptint_tab_pos(table_pos *t)
+{
+  DBUG_PRINT("XXXX", ("Table: %s", t->table->alias.str));
+  List_iterator_fast iti(t->on_conds);
+  Item *item;
+  while ((item= iti++))
+  {
+    StringBuffer<STRING_BUFFER_USUAL_SIZE> buf;
+    String expr(buf);
+    item->print(&expr, QT_ORDINARY);
+    DBUG_PRINT("INFO", ("  On: %s", expr.c_ptr()));
+  }
+  List_iterator_fast itit(t->inner_side);
+  table_pos *tbl;
+  while ((tbl= itit++))
+  {
+    DBUG_PRINT("INFO", ("  Inner side: %s",
+               tbl->table->alias.str));
+  }
+  List_iterator_fast itot(t->outer_side);
+  while ((tbl= itot++))
+  {
+    DBUG_PRINT("INFO", ("  Outer side: %s",
+               tbl->table->alias.str));
+  }
+}
+#endif
+
+bool setup_oracle_join(THD *thd, COND **conds, TABLE_LIST *tables, uint n_tables)
+{
+  DBUG_ENTER("setup_oracle_join");
+  Item_cond_and *and_item= NULL;
+  if (!(*conds)->with_ora_join() || n_tables == 0)
+    DBUG_RETURN(FALSE); // no oracle joins
+
+  table_pos *tab= (table_pos *) new(thd->mem_root) table_pos[n_tables];
+  table_pos *t= tab;
+  TABLE_LIST *table= tables;
+  uint i= 0;
+  // setup origonal order
+  for(;table; i++, t++, table= table->next_local)
+  {
+    DBUG_ASSERT(i < n_tables);
+    t->next= NULL;
+    t->inner_side.empty();
+    t->outer_side.empty();
+    t->table= table;
+    table->ora_join_table_no= t->order= i;
+    t->processed= FALSE;
+  }
+  DBUG_ASSERT(i == n_tables);
+  if ((*conds)->type() != Item::FUNC_ITEM &&
+      ((Item_func*)(*conds))->functype() == Item_func::COND_AND_FUNC)
+  {
+    and_item= (Item_cond_and *)(*conds);
+    Item *item;
+    List_iterator<Item> it(*and_item->argument_list());
+    while ((item= it++))
+    {
+      if (item->with_ora_join())
+      {
+        exp_processing_result res= ora_join_process_expression(thd, item, tab, n_tables);
+        if (res == EXP_ERROR)
+          DBUG_RETURN(TRUE);
+        if (res != EXP_IGNORED)
+        {
+          item->walk(&Item::remove_ora_join_processor, FALSE, NULL);
+          it.remove(); // will be moved to ON
+        }
+      }
+    }
+  }
+  else
+  {
+    if ((*conds)->with_ora_join())
+    {
+      exp_processing_result res= ora_join_process_expression(thd, (*conds),
+                                                             tab, n_tables);
+      if (res == EXP_ERROR)
+        DBUG_RETURN(TRUE);
+      if (res != EXP_IGNORED)
+      {
+        (*conds)->walk(&Item::remove_ora_join_processor, FALSE, NULL);
+        *conds= NULL; // will be moved to ON
+      }
+    }
+  }
+
+  // sort relations if needed
+  for(i= 0; i < n_tables; i++)
+  {
+    /*
+      we do not need inner side sorted, becouse it always processed ba
+      inserts with order check
+
+    if (tab[i].inner_side.elements > 1)
+       bubble_sort<table_pos>(&tab[i].inner_side,
+                              table_pos_sort, NULL);
+    */
+
+    /*
+      we have to sort this backward becouse after insert the list will be
+      reverted
+      */
+    if (tab[i].outer_side.elements > 1)
+       bubble_sort<table_pos>(&tab[i].outer_side,
+                              table_pos_sort, NULL);
+#ifndef DBUG_OFF
+    dbug_ptint_tab_pos(tab + i);
+#endif
+
+  }
+  // order tables
+  table_pos *list= NULL;
+  table_pos **prev= &list;
+  uint processed= 0;
+  i= 0;
+  do
+  {
+    //find first independent
+    for(;
+        i < n_tables && (tab[i].processed || tab[i].inner_side.elements != 0);
+        i++);
+    if (i >= n_tables)
+      break;
+
+    // Process "bush" whith this indeendent is top of one of branches
+    process_tab(tab + i, prev, processed);
+    process_outer_relations(tab + i, prev, processed);
+  }while (i < n_tables);
+
+  if (processed < n_tables)
+  {
+    /*
+      "round" cyclic dependence happened
+
+       t1 -> t2 -> t3 -+
+        ^              |
+        |              |
+        +--------------+
+
+       there is no starting point for bush processing,
+       so this table are left not "processed"
+    */
+    my_error(ER_INVALID_USE_OF_ORA_JOIN_CYCLE, MYF(0));
+    DBUG_RETURN(TRUE);
+  }
+
+  for(table_pos *t= list; t != NULL; t= t->next)
+  {
+#ifndef DBUG_OFF
+    dbug_ptint_tab_pos(t);
+#endif
+  }
+
+  // clean after processing
+  if (and_item)
+  {
+    if (and_item->argument_list()->elements == 0)
+    {
+      // No condition left
+      (*conds)= NULL;
+    }
+    if (and_item->argument_list()->elements == 1)
+    {
+      // only one condition left
+      (*conds)= (Item *)and_item->argument_list()->head();
+    }
+  }
+  if ((*conds)) // remove flags becaouse we converted them
+    (*conds)->walk(&Item::remove_ora_join_processor, FALSE, NULL);
+  DBUG_RETURN(FALSE);
+}
 /*
   Fix all conditions and outer join expressions.
 
@@ -8883,6 +9300,9 @@ int setup_conds(THD *thd, TABLE_LIST *tables, List<TABLE_LIST> &leaves,
       wrap_ident(thd, conds);
     (*conds)->mark_as_condition_AND_part(NO_JOIN_NEST);
     if ((*conds)->fix_fields_if_needed_for_bool(thd, conds))
+      goto err_no_arena;
+
+    if (setup_oracle_join(thd, conds, tables, select_lex->table_list.elements))
       goto err_no_arena;
   }
 

@@ -1,0 +1,23 @@
+create table t1 (a int);
+create table t2 (b int);
+create table t3 (c int);
+
+SET sql_mode=ORACLE;
+
+--echo # b - cyrcle
+--error ER_INVALID_USE_OF_ORA_JOIN_CYCLE
+select * from t1, t2, t3
+  where t1.a = t2.b(+) AND t2.b = t3.c(+) AND
+        t3.c= t2.b(+);
+--echo # O - cyrcle
+--error ER_INVALID_USE_OF_ORA_JOIN_CYCLE
+select * from t1, t2, t3
+  where t1.a = t2.b(+) AND t2.b = t3.c(+) AND
+        t3.c= t1.a(+);
+--echo # self-reference cyrcle
+--error ER_INVALID_USE_OF_ORA_JOIN_CYCLE
+select * from t1, t2, t3
+  where t1.a = t2.b(+) AND t2.b = t3.c(+) AND
+        t3.c= t3.c(+);
+
+DROP TABLE t1,t2,t3;

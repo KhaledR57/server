@@ -1,0 +1,20 @@
+create table t1 (a int);
+create table t2 (b int);
+create table t3 (c int);
+SET sql_mode=ORACLE;
+# b - cyrcle
+select * from t1, t2, t3
+where t1.a = t2.b(+) AND t2.b = t3.c(+) AND
+t3.c= t2.b(+);
+ERROR HY000: Invalid usage of (+) operator: cycle dependencies
+# O - cyrcle
+select * from t1, t2, t3
+where t1.a = t2.b(+) AND t2.b = t3.c(+) AND
+t3.c= t1.a(+);
+ERROR HY000: Invalid usage of (+) operator: cycle dependencies
+# self-reference cyrcle
+select * from t1, t2, t3
+where t1.a = t2.b(+) AND t2.b = t3.c(+) AND
+t3.c= t3.c(+);
+ERROR HY000: Invalid usage of (+) operator: cycle dependencies
+DROP TABLE t1,t2,t3;
