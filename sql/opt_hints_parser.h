@@ -87,6 +87,7 @@ public:
     keyword_NO_DERIVED_CONDITION_PUSHDOWN,
     keyword_MERGE,
     keyword_NO_MERGE,
+    keyword_DEBUG_GUARD,  // why does this fix it?
 
     // Other token types
     tIDENT,
