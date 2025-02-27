@@ -8812,19 +8812,24 @@ bool setup_on_expr(THD *thd, TABLE_LIST *table, bool is_update)
   return FALSE;
 }
 
+/**
+  Structure to collect oracle outer join relations and order tables
+*/
 
 struct table_pos: public Sql_alloc
 {
-  table_pos *next;
+  table_pos *next; // user to order tables correctly
   List<table_pos> inner_side;
   List<table_pos> outer_side;
   List<Item> on_conds;
   TABLE_LIST *table;
-  int order;
+  int order; // original order of the table
   bool processed;
 };
 
-
+/*
+  Sort order
+*/
 static int
 table_pos_sort(table_pos *a, table_pos *b, void *arg)
 {
@@ -8833,6 +8838,11 @@ table_pos_sort(table_pos *a, table_pos *b, void *arg)
 }
 
 typedef enum {EXP_ERROR, EXP_OK, EXP_IGNORED} exp_processing_result;
+
+
+/**
+  Collect information about table relation from the conditions (WHERE)
+*/
 
 static exp_processing_result
 ora_join_process_expression(THD *thd, Item *cond,
@@ -8881,6 +8891,13 @@ ora_join_process_expression(THD *thd, Item *cond,
   DBUG_RETURN(EXP_OK);
 }
 
+
+/**
+  Put table in the table order list
+
+  Note: the table should not be in the list
+*/
+
 static void process_tab(table_pos *t, table_pos **&prev, uint &processed)
 {
     *prev= t;
@@ -8891,28 +8908,56 @@ static void process_tab(table_pos *t, table_pos **&prev, uint &processed)
     processed++;
 }
 
-static bool put_after(table_pos *tab,
+
+static bool put_after(THD *thd,
+                      table_pos *tab,
                       table_pos **first_in_this_subgraph,
                       table_pos **&prev,
-                      uint &processed);
+                      uint &processed,
+                      uint n_tables);
 
-static bool check_directed_cycle(table_pos *tab, table_pos* beginning)
+
+/**
+  Check presence of directional cycles (starting from "tab" with beginning
+  of check in "beggining")  in case we have non-directional cycle
+*/
+
+static bool check_directed_cycle(THD* thd, table_pos *tab, table_pos* beginning, uint lvl, uint max)
 {
   List_iterator_fast<table_pos> it(tab->outer_side);
   table_pos *t;
+  uchar buff[STACK_BUFF_ALLOC]; // Max argument in function
+  if (check_stack_overrun(thd, STACK_MIN_SIZE, buff))
+    return(TRUE);// Fatal error flag is set!
+
+  if ((++lvl) >= max)
+    /*
+      We checked tables more times than tables we have => we have other cycle
+      reachable from "beginning"
+
+      TODO: try to make such test
+    */
+    return FALSE;
   while((t= it++))
   {
     if (t == beginning)
       return true;
-    if (check_directed_cycle(t, beginning))
-      return TRUE;
+    if (check_directed_cycle(thd, t, beginning, lvl, max))
+return TRUE;
   }
   return FALSE;
 }
 
-static bool process_outer_relations(table_pos *tab,
+
+/**
+  Process outer relation of teble just added to the order list
+*/
+
+static bool process_outer_relations(THD* thd,
+                                    table_pos *tab,
                                     table_pos **&prev,
-                                    uint &processed)
+                                    uint &processed,
+                                    uint n_tables)
 {
   if (tab->outer_side.elements > 0)
   {
@@ -8937,7 +8982,7 @@ static bool process_outer_relations(table_pos *tab,
 
           Check if it is directional loop also:
         */
-        if (check_directed_cycle(t, t))
+        if (check_directed_cycle(thd, t, t, 0, n_tables))
         {
           /*
              "round" cyclic reference happened
@@ -8955,7 +9000,8 @@ static bool process_outer_relations(table_pos *tab,
       }
       else
       {
-        if (put_after(t, first_in_this_subgraph, prev, processed))
+        if (put_after(thd, t, first_in_this_subgraph, prev,
+                      processed, n_tables))
           return TRUE;
       }
     }
@@ -8963,11 +9009,24 @@ static bool process_outer_relations(table_pos *tab,
   return FALSE;
 }
 
-static bool put_between(table_pos *tab, table_pos **first_in_this_subgraph,
-                        table_pos *last_in_the_subgraph, uint &processed)
+/*
+  Put "tab" between "first_in_this_subgraph" and "last_in_the_subgraph".
+
+  Used to process INNER tables of "last_in_the_subgraph" nserted as
+  OUTER table of "first_in_this_subgraph".
+*/
+
+static bool put_between(THD *thd,
+                        table_pos *tab, table_pos **first_in_this_subgraph,
+                        table_pos *last_in_the_subgraph, uint &processed,
+                        uint n_tables)
 {
   table_pos **prev= first_in_this_subgraph;
   table_pos *curr= *prev;
+  uchar buff[STACK_BUFF_ALLOC]; // Max argument in function
+  if (check_stack_overrun(thd, STACK_MIN_SIZE, buff))
+    return(TRUE);// Fatal error flag is set!
+
   // find place to insert
   while (curr != last_in_the_subgraph &&  tab->order < curr->order)
   {
@@ -8980,17 +9039,28 @@ static bool put_between(table_pos *tab, table_pos **first_in_this_subgraph,
 
   table_pos *next= tab->next;
   tmp=  &tab->next;
-  process_outer_relations(tab, tmp, processed);
+  process_outer_relations(thd, tab, tmp, processed, n_tables);
   *tmp= next; // return "tail" of the list (if needed)
 
   return FALSE;
 }
 
-static bool put_after(table_pos *tab,
+
+/**
+  Put tab after prev and process its INNER side relations
+*/
+
+static bool put_after(THD *thd,
+                      table_pos *tab,
                       table_pos **first_in_this_subgraph,
                       table_pos **&prev,
-                      uint &processed)
+                      uint &processed,
+                      uint n_tables)
 {
+  uchar buff[STACK_BUFF_ALLOC]; // Max argument in function
+  if (check_stack_overrun(thd, STACK_MIN_SIZE, buff))
+    return(TRUE);// Fatal error flag is set!
+
   process_tab(tab, prev, processed);
   if (tab->inner_side.elements)
   {
@@ -9045,7 +9115,8 @@ static bool put_after(table_pos *tab,
           it have definetly early position in the original list of tables
           than t4.
         */
-        if (put_between(t, first_in_this_subgraph, tab, processed))
+        if (put_between(thd, t, first_in_this_subgraph, tab,
+                        processed, n_tables))
           return TRUE;
       }
     }
@@ -9054,6 +9125,7 @@ static bool put_after(table_pos *tab,
 
   return FALSE;
 }
+
 
 #ifndef DBUG_OFF
 static void dbug_ptint_tab_pos(table_pos *t)
@@ -9083,6 +9155,10 @@ static void dbug_ptint_tab_pos(table_pos *t)
   }
 }
 #endif
+
+/**
+  Process Oracle outer join (+) in WHERE
+*/
 
 bool setup_oracle_join(THD *thd, COND **conds, TABLE_LIST *tables, uint n_tables)
 {
@@ -9184,7 +9260,7 @@ bool setup_oracle_join(THD *thd, COND **conds, TABLE_LIST *tables, uint n_tables
 
     // Process "sub-graph" whith this indeendent is top of one of branches
     process_tab(tab + i, prev, processed);
-    process_outer_relations(tab + i, prev, processed);
+    process_outer_relations(thd, tab + i, prev, processed, n_tables);
   }while (i < n_tables);
 
   if (processed < n_tables)
