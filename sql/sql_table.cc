@@ -5985,7 +5985,6 @@ my_bool open_global_temporary_table(THD *thd, TABLE_SHARE *source,
   if (thd->temporary_tables
       && thd->temporary_tables->global_temporary_tables_count)
   {
-    // TODO test table reopen (see "Can't reopen" in main.reopen_temp_table)
     TMP_TABLE_SHARE *share= NULL;
     if (thd->internal_open_temporary_table(out_table, &table, &share))
       return TRUE;
@@ -6010,7 +6009,7 @@ my_bool open_global_temporary_table(THD *thd, TABLE_SHARE *source,
 
     Closefrm_context closefrm_context{&global_table};
 
-    if (global_table.file->discover_check_version()) // TODO test (S3)!
+    if (global_table.file->discover_check_version())
       return TRUE;
 
     Alter_info alter_info;
@@ -6039,8 +6038,6 @@ my_bool open_global_temporary_table(THD *thd, TABLE_SHARE *source,
 
     ++thd->temporary_tables->global_temporary_tables_count;
     table= create_info.table;
-
-    // TODO pos_in_locked_tables??
 
     TMP_TABLE_SHARE *share= (TMP_TABLE_SHARE*)table->s;
     share->from_share= source;
