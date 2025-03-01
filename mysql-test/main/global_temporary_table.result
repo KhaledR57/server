@@ -151,5 +151,5 @@ disconnect con1;
 connection default;
 drop table t;
 ERROR HY000: Lock wait timeout exceeded; try restarting transaction
-delete from t;
+truncate t;
 drop table t;

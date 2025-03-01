@@ -110,5 +110,5 @@ select * from t;
 
 --error ER_LOCK_WAIT_TIMEOUT
 drop table t;
-delete from t;
+truncate t;
 drop table t;
