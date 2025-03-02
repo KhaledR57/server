@@ -1,4 +1,6 @@
 source include/have_innodb.inc;
+source include/not_embedded.inc;
+source include/no_protocol.inc;
 
 --echo #
 --echo # MDEV-20299 SET SESSION AUTHORIZATION
